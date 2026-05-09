@@ -1,7 +1,7 @@
-"""space CRUD + access checks, mirroring ``com.atproto.space.*`` XRPC shape.
+"""space CRUD + access checks, mirroring `com.atproto.space.*` XRPC shape.
 
-today: backed by postgres tables (``spaces``, ``space_members``, ``space_records``).
-tomorrow: implementation calls ``com.atproto.space.*`` on the user's PDS,
+today: backed by postgres tables (`spaces`, `space_members`, `space_records`).
+tomorrow: implementation calls `com.atproto.space.*` on the user's PDS,
 verifying SpaceCredential JWTs. the public interface here doesn't change.
 """
 
@@ -21,9 +21,9 @@ async def get_or_create_personal_space(
 ) -> Space:
     """return the user's personal space for a given skey, creating it if absent.
 
-    the personal space type (``fm.plyr.personal``) is the OAuth consent
-    boundary for a user's private app data. ``skey`` distinguishes multiple
-    personal spaces under the same owner — e.g. ``"playlists"``, ``"drafts"``.
+    the personal space type (`fm.plyr.personal`) is the OAuth consent
+    boundary for a user's private app data. `skey` distinguishes multiple
+    personal spaces under the same owner — e.g. `"playlists"`, `"drafts"`.
 
     on creation the owner is added as the sole member.
     """
@@ -89,7 +89,7 @@ async def create_record(
 ) -> SpaceRecord:
     """create a new record in a permissioned space.
 
-    raises if a record with the same ``(space_uri, collection, rkey)`` exists.
+    raises if a record with the same `(space_uri, collection, rkey)` exists.
     the unique constraint on the table enforces it; flush surfaces the error.
     """
     record = SpaceRecord(
@@ -110,7 +110,7 @@ async def get_record(
     collection: str,
     rkey: str,
 ) -> SpaceRecord | None:
-    """fetch a single record by ``(space, collection, rkey)``."""
+    """fetch a single record by `(space, collection, rkey)`."""
     result = await db.execute(
         select(SpaceRecord).where(
             SpaceRecord.space_uri == space_uri,

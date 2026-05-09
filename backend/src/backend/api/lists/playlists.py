@@ -3,14 +3,14 @@
 playlists come in two flavors:
 
 * **public** — cached metadata for an ATProto list record on the user's PDS.
-  ``atproto_record_uri`` is the source of truth for items.
+  `atproto_record_uri` is the source of truth for items.
 
 * **private** — lives in a permissioned space (single-member, owner-only)
-  modeled after atproto's permissioned-data spec. ``space_uri`` is set;
-  the items live inline in a ``SpaceRecord`` keyed by playlist id.
+  modeled after atproto's permissioned-data spec. `space_uri` is set;
+  the items live inline in a `SpaceRecord` keyed by playlist id.
   no ATProto list record is written.
 
-see ``backend._internal.spaces`` for the abstraction and
+see `backend._internal.spaces` for the abstraction and
 zzstoatzz/plyr.fm#1384 for the strategy.
 """
 
@@ -98,7 +98,7 @@ async def _read_playlist_items(
     playlist: Playlist,
     artist: Artist,
 ) -> list[dict[str, str]]:
-    """fetch playlist items as ``[{uri, cid}, ...]``.
+    """fetch playlist items as `[{uri, cid}, ...]`.
 
     private → SpaceRecord; public → ATProto list record on the owner's PDS.
     """
@@ -126,7 +126,7 @@ async def _assert_can_mutate(
     session: AuthSession,
     playlist: Playlist,
 ) -> None:
-    """raise the appropriate HTTPException if ``session`` can't mutate ``playlist``.
+    """raise the appropriate HTTPException if `session` can't mutate `playlist`.
 
     public playlists are visible to anyone, so a non-owner gets 403 ("you can't
     edit this"). private playlists must not leak existence — non-members get
@@ -175,7 +175,7 @@ async def create_playlist(
     metadata locally.
 
     private: skips the ATProto write, scopes the playlist to the user's
-    personal space, and stores items inline in a ``SpaceRecord``.
+    personal space, and stores items inline in a `SpaceRecord`.
     """
     # get owner handle for response
     artist_result = await db.execute(select(Artist).where(Artist.did == session.did))
@@ -277,7 +277,7 @@ async def list_artist_public_playlists(
 ) -> list[PlaylistResponse]:
     """list public playlists for an artist (no auth required).
 
-    private playlists are excluded regardless of ``show_on_profile``.
+    private playlists are excluded regardless of `show_on_profile`.
     """
     result = await db.execute(
         select(Playlist, Artist)
@@ -431,7 +431,7 @@ async def add_track_to_playlist(
     """append a track to a playlist.
 
     public: rewrites the ATProto list record on the user's PDS.
-    private: rewrites the inline ``items`` array on the SpaceRecord.
+    private: rewrites the inline `items` array on the SpaceRecord.
     """
     result = await db.execute(
         select(Playlist, Artist)

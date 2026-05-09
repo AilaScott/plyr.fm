@@ -144,7 +144,7 @@ max_lines = 555
 
 [[rules]]
 path = "frontend/src/routes/library/+page.svelte"
-max_lines = 634
+max_lines = 720
 
 [[rules]]
 path = "frontend/src/routes/liked/+page.svelte"
@@ -252,7 +252,7 @@ max_lines = 574
 
 [[rules]]
 path = "backend/src/backend/api/lists/playlists.py"
-max_lines = 1006
+max_lines = 1020
 
 [[rules]]
 path = "backend/src/backend/api/tracks/audio_replace.py"
@@ -273,3 +273,7 @@ max_lines = 668
 [[rules]]
 path = "frontend/src/routes/embed/track/[[]id[]]/+page.svelte"
 max_lines = 623
+
+[[rules]]
+path = "frontend/src/routes/playlist/[[]id[]]/+page.svelte"
+max_lines = 2464

@@ -1,7 +1,7 @@
 """NSID constants for plyr.fm spaces and the records they contain.
 
 space TYPE NSIDs describe the modality / OAuth consent boundary
-(``what kind of space is this``). record COLLECTION NSIDs describe
+(`what kind of space is this`). record COLLECTION NSIDs describe
 record shape and are reused across public and private storage —
 a playlist is a playlist regardless of where it lives.
 """

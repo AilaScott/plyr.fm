@@ -1,8 +1,8 @@
 """space URI helpers.
 
-today's scheme is ``plyr-space://<owner_did>/<type>/<skey>`` — a one-line
-swap to ``ats://`` when atproto permissioned data ships. picked a distinct
-scheme rather than ``at://`` because the spec is explicit that permissioned
+today's scheme is `plyr-space://<owner_did>/<type>/<skey>` — a one-line
+swap to `ats://` when atproto permissioned data ships. picked a distinct
+scheme rather than `at://` because the spec is explicit that permissioned
 URIs resolve through a different protocol from public records.
 """
 
@@ -17,9 +17,9 @@ def build_space_uri(owner_did: str, type_nsid: str, skey: str) -> str:
 
 
 def parse_space_uri(uri: str) -> tuple[str, str, str]:
-    """parse a space URI into ``(owner_did, type_nsid, skey)``.
+    """parse a space URI into `(owner_did, type_nsid, skey)`.
 
-    raises ``ValueError`` if the URI does not match the expected scheme.
+    raises `ValueError` if the URI does not match the expected scheme.
     """
     parsed = urlparse(uri)
     if parsed.scheme != SCHEME:

@@ -26,8 +26,8 @@ from backend.models.database import Base
 class Space(Base):
     """a permissioned-data space.
 
-    addressed today as ``plyr-space://<owner_did>/<type>/<skey>``;
-    will become ``ats://<owner_did>/<type>/<skey>`` when the protocol lands.
+    addressed today as `plyr-space://<owner_did>/<type>/<skey>`;
+    will become `ats://<owner_did>/<type>/<skey>` when the protocol lands.
     """
 
     __tablename__ = "spaces"
@@ -73,8 +73,8 @@ class SpaceMember(Base):
 class SpaceRecord(Base):
     """a record stored in a permissioned space.
 
-    keyed by (space, collection, rkey) like a public repo record. ``value``
-    holds the CBOR-equivalent JSON payload. ``writer_did`` is the member
+    keyed by (space, collection, rkey) like a public repo record. `value`
+    holds the CBOR-equivalent JSON payload. `writer_did` is the member
     who authored it; today equal to the space owner for owner-only spaces,
     but kept distinct so multi-member spaces work without schema change.
     """

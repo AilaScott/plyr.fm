@@ -15,11 +15,11 @@ class Playlist(Base):
     """playlist metadata.
 
     public playlists cache an ATProto list record on the user's PDS;
-    ``atproto_record_uri`` is the source of truth for items.
+    `atproto_record_uri` is the source of truth for items.
 
-    private playlists live in a permissioned space (``space_uri`` set,
-    ``atproto_record_uri`` NULL); the corresponding ``SpaceRecord``
-    holds the items inline. see ``backend._internal.spaces``.
+    private playlists live in a permissioned space (`space_uri` set,
+    `atproto_record_uri` NULL); the corresponding `SpaceRecord`
+    holds the items inline. see `backend._internal.spaces`.
     """
 
     __tablename__ = "playlists"
