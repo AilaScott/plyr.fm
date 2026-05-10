@@ -147,7 +147,9 @@ class TestUploadBlobNetworkRetry:
             "backend._internal.atproto.client.get_oauth_client",
             return_value=mock_client,
         ):
-            result = await upload_blob(mock_auth_session, b"fake-audio", "audio/mpeg")
+            result = await upload_blob(
+                mock_auth_session, data=b"fake-audio", content_type="audio/mpeg"
+            )
 
         assert result == blob_ref
         assert mock_client.make_authenticated_request.call_count == 2
@@ -167,7 +169,9 @@ class TestUploadBlobNetworkRetry:
             ),
             pytest.raises(Exception, match=r"blob upload failed after \d+ attempts"),
         ):
-            await upload_blob(mock_auth_session, b"fake-audio", "audio/mpeg")
+            await upload_blob(
+                mock_auth_session, data=b"fake-audio", content_type="audio/mpeg"
+            )
 
     async def test_does_not_retry_payload_too_large(
         self, mock_auth_session: AuthSession
@@ -184,9 +188,40 @@ class TestUploadBlobNetworkRetry:
             ),
             pytest.raises(Exception, match="blob too large"),
         ):
-            await upload_blob(mock_auth_session, b"huge-audio", "audio/mpeg")
+            await upload_blob(
+                mock_auth_session, data=b"huge-audio", content_type="audio/mpeg"
+            )
 
         assert mock_client.make_authenticated_request.call_count == 1
+
+    async def test_streaming_upload_rejects_unsafe_pds_url(
+        self,
+        mock_auth_session: AuthSession,
+    ) -> None:
+        """streaming uploads must mirror the SDK's `is_safe_url` check.
+
+        regression: `_signed_streaming_post` bypasses
+        `OAuthClient.make_authenticated_request` to support body factories,
+        which means it has to mirror upstream's URL validation explicitly —
+        otherwise a malicious or malformed `pds_url` in stored session data
+        could redirect user audio bytes to a private network address.
+        """
+        # rewrite the session's PDS URL to a private/unsafe one. nothing in
+        # the streaming flow should reach the network: the URL check should
+        # raise before httpx is touched.
+        mock_auth_session.oauth_session["pds_url"] = "http://127.0.0.1:8080"
+
+        async def _factory():
+            yield b"audio chunk 1"
+            yield b"audio chunk 2"
+
+        with pytest.raises(ValueError, match="Unsafe URL"):
+            await upload_blob(
+                mock_auth_session,
+                body_factory=_factory,
+                content_length=26,
+                content_type="audio/mpeg",
+            )
 
 
 class TestMakePdsRequestAuthRefresh:
