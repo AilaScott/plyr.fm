@@ -21,8 +21,18 @@ class JobService:
         job_type: JobType,
         owner_did: str,
         initial_message: str = "job created",
+        *,
+        file_id: str | None = None,
+        file_type: str | None = None,
+        is_gated: bool | None = None,
     ) -> str:
-        """Create a new job and return its ID."""
+        """Create a new job and return its ID.
+
+        for upload jobs, callers should pass `file_id`, `file_type`, and
+        `is_gated` so the stuck-upload reaper can clean up the staged R2
+        blob from the right bucket if the job stalls. other job types
+        (export, pds_backfill) leave them None.
+        """
         async with db_session() as db:
             job = Job(
                 type=job_type.value,
@@ -30,6 +40,9 @@ class JobService:
                 status=JobStatus.PENDING.value,
                 message=initial_message,
                 progress_pct=0.0,
+                file_id=file_id,
+                file_type=file_type,
+                is_gated=is_gated,
             )
             db.add(job)
             await db.commit()
@@ -82,6 +95,35 @@ class JobService:
                     status=status.value,
                     progress=progress_pct,
                 )
+
+    async def set_cleanup_hints(
+        self,
+        job_id: str,
+        *,
+        file_id: str,
+        file_type: str,
+        is_gated: bool,
+    ) -> None:
+        """Populate the staged-media cleanup hints on an existing job.
+
+        called by the upload handler once `stage_audio_to_storage` has
+        returned a file_id. these fields are what the stuck-upload reaper
+        reads to delete the staged R2 blob from the right bucket before
+        marking a stalled job failed.
+        """
+        async with db_session() as db:
+            stmt = select(Job).where(Job.id == job_id)
+            db_result = await db.execute(stmt)
+            job = db_result.scalar_one_or_none()
+            if not job:
+                logger.warning(
+                    f"attempted to set cleanup hints on unknown job: {job_id}"
+                )
+                return
+            job.file_id = file_id
+            job.file_type = file_type
+            job.is_gated = is_gated
+            await db.commit()
 
     async def get_job(self, job_id: str) -> Job | None:
         """Get job by ID."""

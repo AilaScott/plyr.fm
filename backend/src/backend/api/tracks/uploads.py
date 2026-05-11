@@ -1392,6 +1392,19 @@ async def upload_track(
                 upload_id, f, file.filename, gated=is_gated
             )
 
+        # record where the staged blob lives so the stuck-upload reaper can
+        # clean it up if this job stalls in `processing` past the threshold.
+        # audio_extension is the original upload extension (e.g. "wav" for a
+        # lossless upload); the playable file_id may differ post-transcode,
+        # but at this point the only blob in R2 is the staged original.
+        if audio_extension:
+            await job_service.set_cleanup_hints(
+                upload_id,
+                file_id=audio_file_id,
+                file_type=audio_extension,
+                is_gated=is_gated,
+            )
+
         # stage image bytes to shared storage (best-effort; missing or
         # invalid images don't fail the whole upload — the orchestrator
         # treats `image_id is None` as "no track artwork").

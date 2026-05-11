@@ -303,6 +303,54 @@ class NotificationService:
             logger.info(f"sent notification for track {track.id}")
         return result
 
+    async def send_reaper_notification(
+        self,
+        reaped_count: int,
+        affected_handles: list[str],
+        threshold_minutes: int,
+        job_ids: list[str],
+    ) -> NotificationResult | None:
+        """admin-only DM summarizing a stuck-upload reaper run.
+
+        called once per reap (not per stuck job) to avoid DM spam during a
+        system-wide outage. the affected handles + job IDs let the
+        on-call (you) jump straight to logfire / DB to investigate without
+        another query.
+        """
+        if not self.recipient_did:
+            logger.warning("recipient not set, skipping reaper notification")
+            return None
+
+        handles_str = (
+            ", ".join(f"@{h}" for h in sorted(affected_handles))
+            if affected_handles
+            else "(unresolved)"
+        )
+        # show at most 3 job ids inline; the rest live in logfire under the
+        # reap_stuck_uploads span. truncation keeps the DM short.
+        if len(job_ids) <= 3:
+            ids_str = ", ".join(job_ids)
+        else:
+            ids_str = ", ".join(job_ids[:3]) + f" (+{len(job_ids) - 3} more)"
+
+        message_text = (
+            f"⚠️ stuck-upload reaper fired on {settings.app.name}\n\n"
+            f"reaped {reaped_count} upload job"
+            f"{'s' if reaped_count != 1 else ''} stuck >{threshold_minutes} min\n"
+            f"affected: {handles_str}\n"
+            f"job ids: {ids_str}\n\n"
+            f"runbook: docs/internal/retrospectives/2026-05-10-worker-oom-loop-streaming.md"
+        )
+
+        result = await self._send_dm_to_did(self.recipient_did, message_text)
+        if result.success:
+            logger.info(
+                "sent reaper notification (reaped=%d, affected=%d)",
+                reaped_count,
+                len(affected_handles),
+            )
+        return result
+
     async def shutdown(self):
         """cleanup resources."""
         logger.info("shutting down notification service")

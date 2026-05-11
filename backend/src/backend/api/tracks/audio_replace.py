@@ -760,6 +760,16 @@ async def replace_track_audio(
                 job_id, f, file.filename, gated=is_gated
             )
 
+        # cleanup hints for the stuck-upload reaper (see uploads.py for the
+        # analogous block + rationale).
+        if audio_extension:
+            await job_service.set_cleanup_hints(
+                job_id,
+                file_id=audio_file_id,
+                file_type=audio_extension,
+                is_gated=is_gated,
+            )
+
         await schedule_track_audio_replace(
             ReplaceContext(
                 job_id=job_id,
