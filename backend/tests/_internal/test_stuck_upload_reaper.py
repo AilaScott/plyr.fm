@@ -90,12 +90,11 @@ async def test_reaper_fails_stuck_upload_and_deletes_staged_blob(
     assert notify_kwargs["affected_handles"] == ["stuck.test"]
     assert notify_kwargs["job_ids"] == [stuck.id]
 
-    refreshed = await db_session.get(Job, stuck.id)
-    assert refreshed is not None
-    assert refreshed.status == JobStatus.FAILED.value
-    assert refreshed.error is not None
-    assert "timed out" in refreshed.error
-    assert refreshed.completed_at is not None
+    await db_session.refresh(stuck)
+    assert stuck.status == JobStatus.FAILED.value
+    assert stuck.error is not None
+    assert "timed out" in stuck.error
+    assert stuck.completed_at is not None
 
 
 async def test_reaper_leaves_recent_processing_jobs_alone(
@@ -124,9 +123,8 @@ async def test_reaper_leaves_recent_processing_jobs_alone(
     mock_delete.assert_not_awaited()
     mock_notify.assert_not_awaited()
 
-    refreshed = await db_session.get(Job, fresh.id)
-    assert refreshed is not None
-    assert refreshed.status == JobStatus.PROCESSING.value
+    await db_session.refresh(fresh)
+    assert fresh.status == JobStatus.PROCESSING.value
 
 
 async def test_reaper_uses_delete_gated_for_gated_uploads(
@@ -160,9 +158,8 @@ async def test_reaper_uses_delete_gated_for_gated_uploads(
     mock_delete.assert_not_awaited()
     mock_delete_gated.assert_awaited_once_with("abc123", "mp3")
 
-    refreshed = await db_session.get(Job, gated.id)
-    assert refreshed is not None
-    assert refreshed.status == JobStatus.FAILED.value
+    await db_session.refresh(gated)
+    assert gated.status == JobStatus.FAILED.value
 
 
 async def test_reaper_handles_job_without_cleanup_hints(
@@ -200,9 +197,8 @@ async def test_reaper_handles_job_without_cleanup_hints(
     mock_delete_gated.assert_not_awaited()
     mock_notify.assert_awaited_once()
 
-    refreshed = await db_session.get(Job, legacy.id)
-    assert refreshed is not None
-    assert refreshed.status == JobStatus.FAILED.value
+    await db_session.refresh(legacy)
+    assert legacy.status == JobStatus.FAILED.value
 
 
 async def test_reaper_sends_one_batched_dm_for_multiple_stuck_jobs(
@@ -270,6 +266,5 @@ async def test_reaper_marks_failed_even_when_r2_delete_throws(
     ):
         await reap_stuck_uploads()
 
-    refreshed = await db_session.get(Job, job.id)
-    assert refreshed is not None
-    assert refreshed.status == JobStatus.FAILED.value
+    await db_session.refresh(job)
+    assert job.status == JobStatus.FAILED.value
