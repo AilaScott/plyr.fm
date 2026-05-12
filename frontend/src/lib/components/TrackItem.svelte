@@ -274,7 +274,7 @@
 			{/if}
 			</div>
 		<div class="track-info">
-			<a href="/track/{track.id}" class="track-title">{track.title}</a>
+			<span class="track-title">{track.title}</span>
 			<div class="track-metadata">
 				{#if (!hideArtist) || (track.features && track.features.length > 0)}
 					<div class="artist-line"
