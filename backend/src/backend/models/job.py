@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Float, Index, String
+from sqlalchemy import Boolean, DateTime, Float, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -54,6 +54,16 @@ class Job(Base):
     )
     error: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Staged-media cleanup hints for the stuck-upload reaper. populated when
+    # an upload job row is created so that if the job sits in `processing`
+    # past the reaper threshold, we can delete the staged R2 blob from the
+    # right bucket (public vs gated) before marking the job failed. nullable
+    # so non-upload job types (export, pds_backfill) don't need them; also
+    # nullable to support upload rows created before this migration.
+    file_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    file_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_gated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
     # Metadata
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
@@ -70,4 +80,7 @@ class Job(Base):
     __table_args__ = (
         Index("idx_jobs_owner", "owner_did"),
         Index("idx_jobs_updated_at", "updated_at"),
+        # composite index for the stuck-upload reaper's hot query:
+        # WHERE type = 'upload' AND status = 'processing' AND updated_at < ?
+        Index("idx_jobs_reaper_scan", "type", "status", "updated_at"),
     )
