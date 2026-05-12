@@ -6,6 +6,7 @@ verifying the swap is atomic, rollback works, and the right hooks fire.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import update
@@ -544,8 +545,46 @@ class TestConcurrentMetadataPatch:
         assert captured_record["title"] == "Patched Title"
 
 
+class TestCreatedAtPreservation:
+    """regression: PDS record createdAt must be preserved on audio replace,
+    not bumped to now()."""
+
+    async def test_preserves_created_at_on_audio_replace(
+        self, db_session: AsyncSession, owner: Artist
+    ) -> None:
+        """the PDS record's createdAt field must match the original track
+        created_at after audio replace — not datetime.now(UTC)."""
+        fixed_created_at = datetime(2026, 4, 4, 12, 0, 0, tzinfo=UTC)
+        track = make_track(file_id="OLD")
+        track.created_at = fixed_created_at
+        db_session.add(track)
+        await db_session.commit()
+        await db_session.refresh(track)
+        track_id = track.id
+
+        captured_record: dict = {}
+
+        async def fake_update_record(
+            *, auth_session, record_uri: str, record: dict
+        ) -> tuple[str, str]:
+            captured_record.update(record)
+            return record_uri, "bafyNEWREC"
+
+        with patched_replace_pipeline(
+            store=storage_result(file_id="NEW"),
+            update_record_side_effect=fake_update_record,
+        ):
+            await _process_replace_background(replace_ctx(track_id=track_id))
+
+        assert captured_record.get("createdAt") == "2026-04-04T12:00:00Z"
+        # also verify the record still has the expected audio fields
+        assert "audioUrl" in captured_record
+        assert captured_record["audioUrl"] == "https://audio.example/new-file-id.mp3"
+
+
 def test_track_audio_state_dataclass() -> None:
     """sanity check the snapshot dataclass."""
+    fixed_time = datetime(2026, 4, 4, 12, 0, 0, tzinfo=UTC)
     state = TrackAudioState(
         track_id=1,
         artist_did=OWNER_DID,
@@ -562,6 +601,8 @@ def test_track_audio_state_dataclass() -> None:
         image_url=None,
         description=None,
         support_gate=None,
+        created_at=fixed_time,
     )
     assert state.track_id == 1
     assert state.support_gate is None
+    assert state.created_at == fixed_time
