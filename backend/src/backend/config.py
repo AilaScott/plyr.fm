@@ -547,6 +547,61 @@ class TealSettings(AppSettingsSection):
     )
 
 
+class IndiemusiSettings(AppSettingsSection):
+    """indiemusi.ch copyright paradigm settings.
+
+    indiemusi.ch publishes the `ch.indiemusi.alpha.*` lexicons covering song /
+    recording / actor.publishingOwner records. plyr.fm offers this as the first
+    opt-in "copyright paradigm".
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="INDIEMUSI_",
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable the indiemusi copyright paradigm. When False, the portal section is hidden and no indiemusi scopes are requested.",
+    )
+    namespace: str = Field(
+        default="ch.indiemusi.alpha",
+        description="Lexicon namespace for the indiemusi copyright paradigm (e.g., ch.indiemusi.alpha).",
+    )
+    paradigm_id: str = Field(
+        default="indiemusi-alpha",
+        description="Stable identifier stored in user_copyright_config.paradigm to mark users who opted into this paradigm.",
+    )
+
+    @computed_field
+    @property
+    def song_collection(self) -> str:
+        """Collection NSID for indiemusi song (composition) records."""
+        return f"{self.namespace}.song"
+
+    @computed_field
+    @property
+    def recording_collection(self) -> str:
+        """Collection NSID for indiemusi recording (master) records."""
+        return f"{self.namespace}.recording"
+
+    @computed_field
+    @property
+    def publishing_owner_collection(self) -> str:
+        """Collection NSID for indiemusi publishingOwner actor records."""
+        return f"{self.namespace}.actor.publishingOwner"
+
+    def scope_tokens(self) -> list[str]:
+        """OAuth scope tokens granting write access to indiemusi collections."""
+        return [
+            f"repo:{self.song_collection}",
+            f"repo:{self.recording_collection}",
+            f"repo:{self.publishing_owner_collection}",
+        ]
+
+
 class BufoSettings(AppSettingsSection):
     """Bufo easter egg configuration."""
 
@@ -969,6 +1024,10 @@ class Settings(AppSettingsSection):
     teal: TealSettings = Field(
         default_factory=TealSettings,
         description="teal.fm scrobbling integration settings",
+    )
+    indiemusi: IndiemusiSettings = Field(
+        default_factory=IndiemusiSettings,
+        description="indiemusi.ch copyright paradigm settings",
     )
     bufo: BufoSettings = Field(
         default_factory=BufoSettings,
