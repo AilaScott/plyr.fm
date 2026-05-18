@@ -6,6 +6,7 @@ verifying the swap is atomic, rollback works, and the right hooks fire.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import update
@@ -219,6 +220,46 @@ class TestReplaceOrchestration:
         assert captured_record["audioUrl"].endswith("/audio/NEW")
         assert "supportGate" in captured_record
         assert captured_record["supportGate"] == {"type": "any"}
+
+    async def test_pds_record_preserves_original_created_at(
+        self, db_session: AsyncSession, owner: Artist
+    ) -> None:
+        """regression for #1316: the PDS record's `createdAt` must reflect
+        the track's original creation time, not the moment of audio replace.
+
+        external ATProto consumers (PDSLS, firehose, other clients) see only
+        the PDS record — stamping `createdAt` to now on every replace makes a
+        years-old track look freshly published every time its audio changes.
+
+        compares the captured `createdAt` against the track's actual
+        `created_at` (microsecond-precision postgres timestamp). without the
+        fix, `build_track_record` falls through to `datetime.now(UTC)` at
+        publish time — different microsecond, assertion fails.
+        """
+        track = make_track(file_id="OLD")
+        db_session.add(track)
+        await db_session.commit()
+        await db_session.refresh(track)
+        track_id = track.id
+        original_created_at = track.created_at
+
+        captured_record: dict = {}
+
+        async def fake_update_record(
+            *, auth_session, record_uri: str, record: dict
+        ) -> tuple[str, str]:
+            captured_record.update(record)
+            return record_uri, "bafyNEWREC"
+
+        with patched_replace_pipeline(
+            store=storage_result(file_id="NEW"),
+            update_record_side_effect=fake_update_record,
+        ):
+            await _process_replace_background(replace_ctx(track_id=track_id))
+
+        # `build_track_record` serializes UTC datetimes as `...Z`.
+        expected = original_created_at.isoformat().replace("+00:00", "Z")
+        assert captured_record["createdAt"] == expected
 
     async def test_lossless_replace_records_original_file_id(
         self, db_session: AsyncSession, owner: Artist
@@ -562,6 +603,7 @@ def test_track_audio_state_dataclass() -> None:
         image_url=None,
         description=None,
         support_gate=None,
+        created_at=datetime.now(UTC),
     )
     assert state.track_id == 1
     assert state.support_gate is None
