@@ -4,8 +4,15 @@ import { API_URL } from './config';
 import { APP_BROADCAST_PREFIX } from './branding';
 import { auth } from './auth.svelte';
 import { player } from './player.svelte';
+import { forYouCache } from './for-you.svelte';
 
 const SYNC_DEBOUNCE_MS = 250;
+
+// "keep playing": when the queue drains to this many upcoming tracks, top the
+// tail up from the For You feed. tracks must be appended ahead of the current
+// track ending so Player.svelte's synchronous prefetch path can resolve them.
+export const CONTINUATION_LOW_WATER = 2;
+const CONTINUATION_BATCH = 20;
 
 /** bridge for routing queue mutations through a jam's WebSocket transport */
 export interface JamBridge {
@@ -28,6 +35,29 @@ class Queue {
 	originalOrder = $state<Track[]>([]);
 	autoAdvance = $state(true);
 	progressMs = $state(0);
+
+	/**
+	 * Index where the auto-generated continuation tail begins (rendered as
+	 * "next from: …"). The tail is always a contiguous suffix, so a single
+	 * boundary captures it (vs a file-id set, which mis-handles duplicates).
+	 * Equals `tracks.length` when there is no tail. Persisted in queue state as
+	 * `continuation_from_index` so it survives reload / cross-tab sync.
+	 */
+	continuationFromIndex = $state(0);
+
+	/**
+	 * "the user explicitly cleared the queue" intent. Suppresses backfill until
+	 * the next explicit play context so "clear upcoming" actually clears.
+	 * Persisted (`continuation_suppressed`) so the clear is authoritative across
+	 * tabs and reloads, not just in the tab that clicked it.
+	 */
+	suppressContinuation = false;
+	private backfilling = false;
+
+	/** whether the track at `index` is part of the continuation tail */
+	isContinuationIndex(index: number): boolean {
+		return index >= this.continuationFromIndex && index < this.tracks.length;
+	}
 
 	revision = $state<number | null>(null);
 	etag = $state<string | null>(null);
@@ -310,6 +340,18 @@ class Queue {
 			state.current_index,
 			this.tracks
 		);
+
+		// restore the continuation boundary (clamped). older states
+		// without the field => no tail (boundary at end).
+		const restored = state.continuation_from_index;
+		this.continuationFromIndex =
+			typeof restored === 'number'
+				? Math.max(0, Math.min(restored, this.tracks.length))
+				: this.tracks.length;
+
+		// restore the "user cleared it" intent so clear stays authoritative
+		// across tabs/reload (a refilling tab can't undo another's clear)
+		this.suppressContinuation = state.continuation_suppressed ?? false;
 	}
 
 	resolveCurrentIndex(currentTrackId: string | null, index: number, tracks: Track[]): number {
@@ -385,7 +427,9 @@ class Queue {
 				shuffle: this.shuffle,
 				original_order_ids: this.originalOrder.map((t) => t.file_id),
 				auto_advance: this.autoAdvance,
-				progress_ms: this.progressMs
+				progress_ms: this.progressMs,
+				continuation_from_index: this.continuationFromIndex,
+				continuation_suppressed: this.suppressContinuation
 			};
 
 			const headers: HeadersInit = {
@@ -493,14 +537,54 @@ class Queue {
 		if (tracks.length === 0) return;
 
 		this.lastUpdateWasLocal = true;
-		this.tracks = [...this.tracks, ...tracks];
+		this.suppressContinuation = false;
+
+		// explicit adds slot ahead of the continuation tail (so the user's own picks
+		// play before recommendations) but never before the current track —
+		// which may itself be in the continuation once playback advances into it
+		const insertAt = Math.max(this.continuationFromIndex, this.currentIndex + 1);
+		this.tracks = [
+			...this.tracks.slice(0, insertAt),
+			...tracks,
+			...this.tracks.slice(insertAt)
+		];
 		this.originalOrder = [...this.originalOrder, ...tracks];
 
+		// keep the continuation suffix starting after the inserted explicit tracks
+		this.continuationFromIndex =
+			insertAt <= this.continuationFromIndex
+				? this.continuationFromIndex + tracks.length
+				: insertAt + tracks.length;
+
 		if (playNow) {
-			this.currentIndex = this.tracks.length - tracks.length;
+			this.currentIndex = insertAt;
 		}
 
 		this.syncState();
+	}
+
+	/**
+	 * Append recommendation tracks as the "next from: for you" tail (deduped
+	 * against the existing queue). The tail is a contiguous suffix anchored by
+	 * `continuationFromIndex`.
+	 */
+	appendContinuation(tracks: Track[]) {
+		const inQueue = new Set(this.tracks.map((t) => t.file_id));
+		const fresh = tracks.filter((t) => !inQueue.has(t.file_id));
+		if (fresh.length === 0) return;
+
+		this.lastUpdateWasLocal = true;
+		// if there's no tail yet, it begins where the current queue ends
+		if (this.continuationFromIndex >= this.tracks.length) {
+			this.continuationFromIndex = this.tracks.length;
+		}
+		this.tracks = [...this.tracks, ...fresh];
+		this.originalOrder = [...this.originalOrder, ...fresh];
+		this.syncState();
+	}
+
+	private resetContinuation() {
+		this.continuationFromIndex = this.tracks.length;
 	}
 
 	setQueue(tracks: Track[], startIndex = 0) {
@@ -510,26 +594,34 @@ class Queue {
 		}
 
 		this.lastUpdateWasLocal = true;
+		this.suppressContinuation = false;
 		this.tracks = [...tracks];
 		this.originalOrder = [...tracks];
 		this.currentIndex = this.clampIndex(startIndex);
+		this.resetContinuation();
 		this.syncState();
 	}
 
 	playNow(track: Track, autoPlay = true) {
 		this.lastUpdateWasLocal = autoPlay;
-		const upNext = this.tracks.slice(this.currentIndex + 1);
+		this.suppressContinuation = false;
+		// keep explicitly-queued up-next, but drop the stale "next from" tail —
+		// the new track is a new context, so let backfill regenerate it
+		const upNext = this.tracks.slice(this.currentIndex + 1, this.continuationFromIndex);
 		this.tracks = [track, ...upNext];
 		this.originalOrder = [...this.tracks];
 		this.currentIndex = 0;
+		this.resetContinuation();
 		this.syncState();
 	}
 
 	clear() {
 		this.lastUpdateWasLocal = true;
+		this.suppressContinuation = false;
 		this.tracks = [];
 		this.originalOrder = [];
 		this.currentIndex = 0;
+		this.resetContinuation();
 		this.syncState();
 	}
 
@@ -577,12 +669,14 @@ class Queue {
 
 		this.lastUpdateWasLocal = true;
 
-		// keep current track, shuffle everything after it
-		const current = this.tracks[this.currentIndex];
-		const before = this.tracks.slice(0, this.currentIndex);
-		const after = this.tracks.slice(this.currentIndex + 1);
+		// shuffle only the explicit up-next; leave the current track, history,
+		// and the auto-generated continuation tail untouched
+		const before = this.tracks.slice(0, this.currentIndex + 1);
+		const explicitEnd = Math.max(this.currentIndex + 1, this.continuationFromIndex);
+		const after = this.tracks.slice(this.currentIndex + 1, explicitEnd);
+		const continuationTail = this.tracks.slice(explicitEnd);
 
-		// if only one track in up next, nothing to shuffle
+		// if only one track in the explicit up next, nothing to shuffle
 		if (after.length <= 1) {
 			return;
 		}
@@ -604,11 +698,9 @@ class Queue {
 			shuffled.every((track, i) => track.file_id === after[i].file_id)
 		);
 
-		// rebuild queue: everything before current + current + shuffled upcoming
-		this.tracks = [...before, current, ...shuffled];
-
-		// current index stays the same (it's in the same position)
-		// no need to update currentIndex
+		// rebuild: history + current + shuffled explicit up-next + continuation tail.
+		// counts are preserved on both sides of the boundary, so it stays put.
+		this.tracks = [...before, ...shuffled, ...continuationTail];
 
 		this.schedulePush();
 	}
@@ -617,6 +709,14 @@ class Queue {
 		if (fromIndex === toIndex) return;
 		if (fromIndex < 0 || fromIndex >= this.tracks.length) return;
 		if (toIndex < 0 || toIndex >= this.tracks.length) return;
+
+		// the continuation tail isn't reorderable; clamp moves to the
+		// explicit region so the suffix boundary stays stable
+		if (fromIndex >= this.continuationFromIndex) return;
+		if (this.continuationFromIndex < this.tracks.length) {
+			toIndex = Math.min(toIndex, this.continuationFromIndex - 1);
+		}
+		if (fromIndex === toIndex) return;
 
 		this.lastUpdateWasLocal = true;
 		const updated = [...this.tracks];
@@ -651,6 +751,13 @@ class Queue {
 		this.tracks = updated;
 		this.originalOrder = this.originalOrder.filter((track) => track.file_id !== removed.file_id);
 
+		// removing an explicit track shifts the continuation suffix left; removing
+		// a continuation one just shrinks it
+		if (index < this.continuationFromIndex) {
+			this.continuationFromIndex -= 1;
+		}
+		this.continuationFromIndex = Math.min(this.continuationFromIndex, updated.length);
+
 		if (updated.length === 0) {
 			this.currentIndex = 0;
 			this.syncState();
@@ -675,11 +782,52 @@ class Queue {
 		const currentTrack = this.tracks[this.currentIndex];
 		if (!currentTrack) return;
 
+		// explicit "clear" intent — don't let backfill immediately refill it
+		this.suppressContinuation = true;
 		this.tracks = [currentTrack];
 		this.originalOrder = [currentTrack];
 		this.currentIndex = 0;
+		this.resetContinuation();
 
 		this.syncState();
+	}
+
+	/**
+	 * "keep playing": top up the queue tail from the For You feed. Appends
+	 * real tracks ahead of the current track ending so the Player's
+	 * synchronous prefetch can resolve them. No-op in a jam (jam owns the
+	 * queue) or when the feed has nothing fresh to offer.
+	 */
+	async fillContinuation(): Promise<void> {
+		if (!browser) return;
+		if (this.jamBridge) return;
+		if (this.suppressContinuation) return;
+		if (this.backfilling) return;
+
+		this.backfilling = true;
+		try {
+			if (forYouCache.tracks.length === 0) {
+				await forYouCache.fetch();
+			}
+
+			const inQueue = new Set(this.tracks.map((t) => t.file_id));
+			const currentId = this.currentTrack?.file_id;
+			const candidates = () =>
+				forYouCache.tracks.filter(
+					(t) => !inQueue.has(t.file_id) && t.file_id !== currentId
+				);
+
+			let fresh = candidates();
+			if (fresh.length < CONTINUATION_BATCH && forYouCache.hasMore) {
+				await forYouCache.fetchMore();
+				fresh = candidates();
+			}
+
+			if (fresh.length === 0) return;
+			this.appendContinuation(fresh.slice(0, CONTINUATION_BATCH));
+		} finally {
+			this.backfilling = false;
+		}
 	}
 
 	startPositionSave() {
