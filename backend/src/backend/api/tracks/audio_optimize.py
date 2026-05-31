@@ -19,6 +19,7 @@ import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from urllib.parse import urljoin
 
 import logfire
 from docket import ConcurrencyLimit, ExponentialRetry
@@ -86,6 +87,7 @@ class _AudioState:
     interim_file_id: str
     interim_file_type: str
     created_at: datetime
+    is_gated: bool
 
 
 @dataclass
@@ -148,6 +150,7 @@ async def _load_audio_state(track_id: int) -> _AudioState | None:
             interim_file_id=track.file_id,
             interim_file_type=track.file_type,
             created_at=track.created_at,
+            is_gated=track.support_gate is not None,
         )
 
 
@@ -299,6 +302,7 @@ async def optimize_track_audio(
                 f"track.{state.original_file_type}",
                 state.original_file_type,
                 target_format=OPTIMIZE_TARGET_FORMAT,
+                gated=state.is_gated,
                 timeout_seconds=settings.transcoder.optimize_timeout_seconds,
             )
             if not transcode_info:
@@ -310,26 +314,31 @@ async def optimize_track_audio(
                 raise RuntimeError("transcode to mp3 failed; see job error detail")
             new_mp3_file_id = transcode_info.transcoded_file_id
 
-            mp3_url = await storage.get_url(
-                new_mp3_file_id, file_type="audio", extension=OPTIMIZE_TARGET_FORMAT
-            )
-            if not mp3_url:
-                # transient R2 hiccup; retry rather than give up on the track.
-                raise RuntimeError(
-                    f"failed to resolve mp3 url for file_id={new_mp3_file_id}"
+            if state.is_gated:
+                backend_url = settings.atproto.redirect_uri.rsplit("/", 2)[0]
+                mp3_url = urljoin(
+                    backend_url + "/", f"audio/{new_mp3_file_id}"
                 )
+            else:
+                mp3_url = await storage.get_url(
+                    new_mp3_file_id, file_type="audio", extension=OPTIMIZE_TARGET_FORMAT
+                )
+                if not mp3_url:
+                    raise RuntimeError(
+                        f"failed to resolve mp3 url for file_id={new_mp3_file_id}"
+                    )
 
             sr = StorageResult(
                 file_id=new_mp3_file_id,
                 original_file_id=state.original_file_id,
                 original_file_type=state.original_file_type,
                 playable_format=AudioFormat.MP3,
-                r2_url=mp3_url,
+                r2_url=mp3_url if not state.is_gated else None,
                 transcode_info=transcode_info,
                 needs_optimization=False,
             )
             audio_info = AudioInfo(
-                format=AudioFormat.MP3, duration=None, is_gated=False
+                format=AudioFormat.MP3, duration=None, is_gated=state.is_gated
             )
             phase_ctx = UploadContext(
                 upload_id=job_id,

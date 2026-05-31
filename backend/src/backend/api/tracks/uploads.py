@@ -386,6 +386,7 @@ async def _transcode_audio(
     source_format: str,
     *,
     target_format: str,
+    gated: bool = False,
     timeout_seconds: int | None = None,
 ) -> TranscodeInfo | None:
     """transcode an already-staged audio file to a web-playable format.
@@ -397,6 +398,9 @@ async def _transcode_audio(
     transcoded result back. returns None on failure (job status already
     updated with error).
 
+    when `gated=True` the transcoded output is saved to the private bucket
+    so gated content doesn't leak via a public CDN URL.
+
     args:
         upload_id: job tracking ID
         original_file_id: storage file_id for the lossless source bytes
@@ -405,6 +409,7 @@ async def _transcode_audio(
         target_format: format to produce — "wav" for the fast compatibility
             remux on the upload critical path, "mp3" for the deferred
             optimization pass.
+        gated: if True, save transcoded output to the private bucket
         timeout_seconds: per-request transcoder timeout override. the WAV
             remux is seconds, so the default (settings) is fine; the MP3
             optimization runs off the critical path and passes a generous
@@ -523,7 +528,8 @@ async def _transcode_audio(
             phase="upload_transcoded",
         ) as tracker:
             with open(result.output_path, "rb") as transcoded_file:
-                transcoded_file_id = await storage.save(
+                save_fn = storage.save_gated if gated else storage.save
+                transcoded_file_id = await save_fn(
                     transcoded_file,
                     transcoded_filename,
                     progress_callback=tracker.on_progress,
@@ -603,11 +609,6 @@ async def _store_audio(ctx: UploadContext, audio_info: AudioInfo) -> StorageResu
     transcode_info: TranscodeInfo | None = None
 
     if not audio_info.format.is_web_playable:
-        if audio_info.is_gated:
-            raise UploadPhaseError(
-                "supporter-gated tracks cannot use lossless formats yet"
-            )
-
         # the handler-staged file_id IS the lossless original. we produce a
         # fast 16-bit WAV compatibility rendition (a near-instant PCM rewrap,
         # not the slow MP3 encode) so the track can publish immediately and
@@ -620,6 +621,7 @@ async def _store_audio(ctx: UploadContext, audio_info: AudioInfo) -> StorageResu
             ctx.filename,
             ctx.audio_extension,
             target_format="wav",
+            gated=audio_info.is_gated,
         )
         if not transcode_info:
             raise UploadPhaseError("transcoding failed")
