@@ -229,32 +229,47 @@ def render(
     t = Table(title="summary", title_style="bold")
     t.add_column("lens", style="dim")
     t.add_column("metric")
-    t.add_column("total", justify="right", style="bold green")
+    t.add_column("value", justify="right", style="bold green")
+    # `kind` makes the math honest: "window" rows are true sums over the
+    # horizon; "daily" rows are per-day stats (peak / avg) because the source
+    # only dedups within a day — there's no cross-window unique to sum.
+    t.add_column("kind", style="dim", justify="right")
+
+    def _daily(values: list[float]) -> str:
+        return f"peak {max(values):,.0f} · avg {sum(values) / len(values):,.0f}"
+
     if cf:
-        req = sum(r["requests"] for r in cf)
         byt = sum(r["bytes"] for r in cf)
         cab = sum(r["bytes"] * r["cache_pct"] / 100 for r in cf)
-        t.add_row("edge", "total requests", f"{req:,}")
+        t.add_row("edge", "requests", f"{sum(r['requests'] for r in cf):,}", "window")
+        t.add_row("edge", "bandwidth", _fmt_bytes(byt), "window")
         t.add_row(
-            "edge", "unique visitors (peak day)", f"{max(r['visitors'] for r in cf):,}"
+            "edge", "cache hit %", f"{(cab / byt * 100) if byt else 0:.1f}%", "window"
         )
-        t.add_row("edge", "bandwidth", _fmt_bytes(byt))
-        t.add_row("edge", "cache hit %", f"{(cab / byt * 100) if byt else 0:.1f}%")
-        t.add_row("edge", "threats blocked", f"{sum(r['threats'] for r in cf):,}")
+        t.add_row(
+            "edge", "threats blocked", f"{sum(r['threats'] for r in cf):,}", "window"
+        )
+        t.add_row(
+            "edge", "unique visitors", _daily([r["visitors"] for r in cf]), "daily"
+        )
     else:
-        t.add_row("edge", "—", f"[red]unavailable: {cf_err}[/]")
+        t.add_row("edge", "—", f"[red]unavailable: {cf_err}[/]", "")
     if lf:
-        t.add_row("app", "authed requests", f"{sum(r['requests'] for r in lf):,}")
         t.add_row(
-            "app",
-            "distinct signed-in users",
-            f"{max(r['users'] for r in lf):,} (peak day)",
+            "app", "authed requests", f"{sum(r['requests'] for r in lf):,}", "window"
         )
-        t.add_row("app", "uploads", f"{sum(r['uploads'] for r in lf):,}")
-        t.add_row("app", "5xx errors", f"{sum(r['server_errors'] for r in lf):,}")
+        t.add_row("app", "uploads", f"{sum(r['uploads'] for r in lf):,}", "window")
+        t.add_row(
+            "app", "5xx errors", f"{sum(r['server_errors'] for r in lf):,}", "window"
+        )
+        t.add_row("app", "signed-in users", _daily([r["users"] for r in lf]), "daily")
     else:
-        t.add_row("app", "—", f"[red]unavailable: {lf_err}[/]")
+        t.add_row("app", "—", f"[red]unavailable: {lf_err}[/]", "")
     console.print(t)
+    console.print(
+        "[dim]window = true total over the horizon · daily = per-day stat "
+        "(no cross-day dedup available for unique counts)[/]"
+    )
     print()
 
     # ---- coupled requests: edge vs origin ----
